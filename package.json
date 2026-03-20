@@ -1,16 +1,21 @@
 {
   "name": "@automorph/verification-agent",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Standalone claim verification agent — mark, shortlist, and cite LLM response claims",
   "main": "core.ts",
   "types": "core.ts",
+  "bin": {
+    "claimcheck": "./cli.ts"
+  },
   "scripts": {
     "start":   "tsx server.ts",
+    "proxy":   "tsx proxy.ts",
     "dev":     "tsx --watch server.ts",
+    "dev:proxy":"tsx --watch proxy.ts",
     "build":   "tsc --outDir dist",
-    "test":    "echo 'no tests yet'"
+    "cli":     "tsx cli.ts"
   },
-  "keywords": ["claim-verification", "citations", "LLM", "fact-checking", "agent"],
+  "keywords": ["claim-verification", "citations", "LLM", "fact-checking", "agent", "proxy"],
   "license": "MIT",
   "engines": { "node": ">=18" },
   "dependencies": {
@@ -18,10 +23,10 @@
     "cors":    "^2.8.5"
   },
   "devDependencies": {
-    "tsx":         "^4.0.0",
-    "typescript":  "^5.0.0",
-    "@types/express": "^4.17.21",
-    "@types/cors":    "^2.8.17",
-    "@types/node":    "^20.0.0"
+    "tsx":               "^4.0.0",
+    "typescript":        "^5.0.0",
+    "@types/express":    "^4.17.21",
+    "@types/cors":       "^2.8.17",
+    "@types/node":       "^20.0.0"
   }
 }
