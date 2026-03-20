@@ -6,22 +6,22 @@
  * being returned to the caller.
  *
  * Setup:
- *   1. Start this alongside (or instead of) server.ts:
- *        OLLAMA_API_KEY=sk-... REAL_LLM_BASE_URL=http://localhost:11434 npx tsx proxy.ts
+ *   1. Start the proxy in a background terminal:
+ *        OLLAMA_API_KEY=sk-... npm run proxy
  *
- *   2. Point your LLM client at the proxy instead of the real endpoint:
+ *   2. Point your Ollama client at the proxy:
  *        export OLLAMA_HOST=http://localhost:4001
- *        ollama run llama3 "explain botnets"   ← response is verified before you see it
- *
- *      Or for cloud APIs, set your client's base URL to http://localhost:4001
+ *        ollama run llama3 "explain botnets"
  *
  * Environment variables:
- *   REAL_LLM_BASE_URL   Where to forward requests (default: http://localhost:11434)
+ *   OLLAMA_API_KEY      API key used ONLY for ClaimCheck's internal Nemotron calls
+ *   REAL_LLM_BASE_URL   Where to forward LLM requests (default: http://localhost:11434)
+ *   REAL_LLM_API_KEY    API key for the forwarded LLM — leave unset for local Ollama,
+ *                       set to your cloud key (OpenAI, Groq, etc.) for cloud endpoints
  *   PROXY_PORT          Port this proxy listens on (default: 4001)
- *   OLLAMA_API_KEY      API key forwarded to the real LLM AND used for ClaimCheck LLM calls
  *   DEFAULT_DOMAIN      Default domain for claim checking (default: general)
  *
- * Pass x-claimcheck-domain header to override domain per request:
+ * Per-request domain override:
  *   curl -H "x-claimcheck-domain: cybersecurity" http://localhost:4001/v1/chat/completions ...
  */
 
@@ -29,11 +29,22 @@ import express from "express";
 import { markClaims, shortlistClaims, findCitations, Domain } from "./core";
 
 const app          = express();
-const PROXY_PORT   = parseInt(process.env.PROXY_PORT   || "4001", 10);
-const REAL_LLM_URL = (process.env.REAL_LLM_BASE_URL   || "http://localhost:11434").replace(/\/$/, "");
-const DEF_DOMAIN   = (process.env.DEFAULT_DOMAIN       || "general") as Domain;
+const PROXY_PORT   = parseInt(process.env.PROXY_PORT || "4001", 10);
+const REAL_LLM_URL = (process.env.REAL_LLM_BASE_URL || "http://localhost:11434").replace(/\/$/, "");
+const DEF_DOMAIN   = (process.env.DEFAULT_DOMAIN    || "general") as Domain;
+
+/* Key used ONLY when forwarding to the target LLM.
+   Unset = no Authorization header sent (correct for local Ollama).
+   Set = forwarded as Bearer token (for cloud endpoints like OpenAI, Groq, etc.). */
+const FORWARD_KEY  = process.env.REAL_LLM_API_KEY || "";
 
 app.use(express.json({ limit: "10mb" }));
+
+function forwardHeaders(): Record<string, string> {
+  const h: Record<string, string> = { "Content-Type": "application/json" };
+  if (FORWARD_KEY) h["Authorization"] = `Bearer ${FORWARD_KEY}`;
+  return h;
+}
 
 function inlineCitations(cited: Awaited<ReturnType<typeof findCitations>>): string {
   const refs: string[] = [];
@@ -61,33 +72,29 @@ async function runClaimCheck(text: string, domain: Domain): Promise<string> {
 
 /* ── Health ─────────────────────────────────────────────────────────────── */
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok", mode: "proxy", target: REAL_LLM_URL });
+  res.json({
+    status:         "ok",
+    mode:           "proxy",
+    target:         REAL_LLM_URL,
+    forwardAuthSet: !!FORWARD_KEY,
+  });
 });
 
 /* ── OpenAI-compatible: POST /v1/chat/completions ────────────────────────
    Works with: Ollama (openai-compat mode), OpenAI, Groq, Mistral, Together,
-   Anyscale, LM Studio, Jan, Open WebUI, etc.                              */
+   LM Studio, Jan, Open WebUI, etc.                                         */
 app.post("/v1/chat/completions", async (req, res) => {
   const domain = (req.headers["x-claimcheck-domain"] as Domain) || DEF_DOMAIN;
-  const apiKey = process.env.OLLAMA_API_KEY || "";
-
   try {
     const forwardRes = await fetch(`${REAL_LLM_URL}/v1/chat/completions`, {
       method:  "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {}),
-      },
-      body: JSON.stringify({ ...req.body, stream: false }),
+      headers: forwardHeaders(),
+      body:    JSON.stringify({ ...req.body, stream: false }),
     });
+    if (!forwardRes.ok) return res.status(forwardRes.status).send(await forwardRes.text());
 
-    if (!forwardRes.ok) {
-      const txt = await forwardRes.text();
-      return res.status(forwardRes.status).send(txt);
-    }
-
-    const data = await forwardRes.json() as any;
-    const raw  = data.choices?.[0]?.message?.content ?? "";
+    const data     = await forwardRes.json() as any;
+    const raw      = data.choices?.[0]?.message?.content ?? "";
     const verified = await runClaimCheck(raw, domain);
 
     data.choices[0].message.content = verified;
@@ -101,25 +108,16 @@ app.post("/v1/chat/completions", async (req, res) => {
 /* ── Ollama native: POST /api/chat ──────────────────────────────────────── */
 app.post("/api/chat", async (req, res) => {
   const domain = (req.headers["x-claimcheck-domain"] as Domain) || DEF_DOMAIN;
-  const apiKey = process.env.OLLAMA_API_KEY || "";
-
   try {
     const forwardRes = await fetch(`${REAL_LLM_URL}/api/chat`, {
       method:  "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {}),
-      },
-      body: JSON.stringify({ ...req.body, stream: false }),
+      headers: forwardHeaders(),
+      body:    JSON.stringify({ ...req.body, stream: false }),
     });
+    if (!forwardRes.ok) return res.status(forwardRes.status).send(await forwardRes.text());
 
-    if (!forwardRes.ok) {
-      const txt = await forwardRes.text();
-      return res.status(forwardRes.status).send(txt);
-    }
-
-    const data = await forwardRes.json() as any;
-    const raw  = data.message?.content ?? "";
+    const data     = await forwardRes.json() as any;
+    const raw      = data.message?.content ?? "";
     const verified = await runClaimCheck(raw, domain);
 
     data.message.content = verified;
@@ -132,25 +130,16 @@ app.post("/api/chat", async (req, res) => {
 /* ── Ollama native: POST /api/generate ──────────────────────────────────── */
 app.post("/api/generate", async (req, res) => {
   const domain = (req.headers["x-claimcheck-domain"] as Domain) || DEF_DOMAIN;
-  const apiKey = process.env.OLLAMA_API_KEY || "";
-
   try {
     const forwardRes = await fetch(`${REAL_LLM_URL}/api/generate`, {
       method:  "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {}),
-      },
-      body: JSON.stringify({ ...req.body, stream: false }),
+      headers: forwardHeaders(),
+      body:    JSON.stringify({ ...req.body, stream: false }),
     });
+    if (!forwardRes.ok) return res.status(forwardRes.status).send(await forwardRes.text());
 
-    if (!forwardRes.ok) {
-      const txt = await forwardRes.text();
-      return res.status(forwardRes.status).send(txt);
-    }
-
-    const data = await forwardRes.json() as any;
-    const raw  = data.response ?? "";
+    const data     = await forwardRes.json() as any;
+    const raw      = data.response ?? "";
     const verified = await runClaimCheck(raw, domain);
 
     data.response = verified;
@@ -165,7 +154,7 @@ app.all("*", async (req, res) => {
   try {
     const forwardRes = await fetch(`${REAL_LLM_URL}${req.path}`, {
       method:  req.method,
-      headers: { "Content-Type": "application/json" },
+      headers: forwardHeaders(),
       body:    ["GET", "HEAD"].includes(req.method) ? undefined : JSON.stringify(req.body),
     });
     const txt = await forwardRes.text();
@@ -177,7 +166,8 @@ app.all("*", async (req, res) => {
 
 app.listen(PROXY_PORT, "0.0.0.0", () => {
   console.log(`[ClaimCheck Proxy] listening on port ${PROXY_PORT}`);
-  console.log(`[ClaimCheck Proxy] forwarding to ${REAL_LLM_URL}`);
-  console.log(`[ClaimCheck Proxy] default domain: ${DEF_DOMAIN}`);
-  console.log(`[ClaimCheck Proxy] set OLLAMA_HOST=http://localhost:${PROXY_PORT} in your shell`);
+  console.log(`[ClaimCheck Proxy] forwarding to     ${REAL_LLM_URL}`);
+  console.log(`[ClaimCheck Proxy] forward auth key:  ${FORWARD_KEY ? "set" : "not set (correct for local Ollama)"}`);
+  console.log(`[ClaimCheck Proxy] default domain:    ${DEF_DOMAIN}`);
+  console.log(`[ClaimCheck Proxy] in your shell:     export OLLAMA_HOST=http://localhost:${PROXY_PORT}`);
 });
