@@ -1,0 +1,88 @@
+{
+  "name": "verification-agent",
+  "version": "1.0.0",
+  "displayName": "ClaimCheck Verification Agent",
+  "description": "A three-step agent that post-processes any LLM chatbot response to identify domain-knowledge claims, shortlist the 3 most verifiable ones, and find accurate literature citations for each. Graph-structural observations are automatically excluded since they are grounded in exact computation.",
+  "author": "Automorph",
+  "license": "MIT",
+  "category": "research",
+  "tags": ["claim-verification", "citations", "LLM", "fact-checking", "graph-analysis", "research"],
+  "runtime": "node>=18",
+  "entrypoint": "server.ts",
+
+  "capabilities": [
+    {
+      "id": "mark-claims",
+      "name": "Mark Claims",
+      "description": "Reads every sentence in an LLM response and labels each as a verifiable domain-knowledge claim or not. Graph-structural observations (orbits, group order, node IDs) are never marked.",
+      "endpoint": "POST /api/mark-claims",
+      "input": {
+        "responseText": { "type": "string", "required": true, "description": "Full LLM response text to analyse" },
+        "domain":       { "type": "string", "required": false, "enum": ["cybersecurity","ppi_network","crystallography","social_network","finance_research","general"], "default": "general" }
+      },
+      "output": {
+        "marked": {
+          "type": "array",
+          "items": {
+            "sentence": { "type": "string" },
+            "isClaim":  { "type": "boolean" }
+          }
+        }
+      }
+    },
+    {
+      "id": "find-citations",
+      "name": "Find Citations",
+      "description": "Receives a list of pre-selected claims (isClaim: true) and finds a specific, real published source for each. Claims with no verifiable source are de-marked. Does not fabricate references.",
+      "endpoint": "POST /api/find-citations",
+      "input": {
+        "marked": {
+          "type": "array",
+          "required": true,
+          "description": "Output of mark-claims, optionally filtered to 3 shortlisted candidates",
+          "items": {
+            "sentence": { "type": "string" },
+            "isClaim":  { "type": "boolean" }
+          }
+        },
+        "domain": { "type": "string", "required": false, "default": "general" }
+      },
+      "output": {
+        "cited": {
+          "type": "array",
+          "items": {
+            "sentence": { "type": "string" },
+            "isClaim":  { "type": "boolean" },
+            "citation": { "type": "string", "nullable": true, "description": "FirstAuthor et al., Title, Venue, Year — null if no real source found" }
+          }
+        }
+      }
+    }
+  ],
+
+  "environment": [
+    {
+      "name": "OLLAMA_API_KEY",
+      "required": true,
+      "description": "API key for the Ollama cloud endpoint (nemotron-3-super:cloud model)"
+    },
+    {
+      "name": "PORT",
+      "required": false,
+      "default": "4000",
+      "description": "Port the standalone agent server listens on"
+    }
+  ],
+
+  "integration": {
+    "dropInScript": "/client.js",
+    "usage": "new VerificationAgent({ container: el, apiBase: 'https://your-agent-url', domain: 'finance_research' })",
+    "steps": [
+      "1. agent.run(responseText)  — Step 1: mark claims",
+      "2. agent.shortlist()        — Step 2: client-side, pick top 3 by specificity",
+      "3. agent.cite()             — Step 3: find citations for the 3 shortlisted claims"
+    ]
+  },
+
+  "health": "GET /health"
+}
