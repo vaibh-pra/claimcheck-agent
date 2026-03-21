@@ -48,18 +48,24 @@
   cursor:pointer; transition:background .15s;
 }
 .va-pill-cite:hover { background:rgba(16,185,129,.22); }
-.va-cite-panel {
-  display:none;
-  margin:3px 0 6px 0;
-  padding:5px 10px;
-  background:rgba(16,185,129,.06);
-  border-left:2px solid #10b981;
-  border-radius:0 5px 5px 0;
-  font-size:11px;
-  color:#a7f3d0;
-  line-height:1.5;
+.va-sources {
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: rgba(16,185,129,.05);
+  border-left: 2px solid #10b981;
+  border-radius: 0 6px 6px 0;
 }
-.va-cite-panel.open { display:block; }
+.va-source-item {
+  font-size: 11px;
+  color: #a7f3d0;
+  line-height: 1.7;
+  padding: 2px 0;
+  border-radius: 3px;
+  transition: background .3s;
+}
+.va-src-flash {
+  background: rgba(16,185,129,.18) !important;
+}
 .va-footer {
   display:flex;
   align-items:center;
@@ -225,23 +231,53 @@
   };
 
   VerificationAgent.prototype._renderStep3 = function (cited) {
-    let html  = '<div class="va-wrap">';
-    let count = 0;
-    let pid   = 0;
+    const id = this._id;
+
+    /* Build deduplication map: citation string → 1-based reference number.
+       If two claims share the exact same citation, they get the same [N]. */
+    const citMap = new Map(); // citation → refNum
+    const refs   = [];        // unique citations in order of first appearance
+    for (const m of cited) {
+      if (m.isClaim && m.citation && !citMap.has(m.citation)) {
+        refs.push(m.citation);
+        citMap.set(m.citation, refs.length);
+      }
+    }
+
+    let html         = '<div class="va-wrap">';
+    let claimCount   = 0;
+
     for (const m of cited) {
       const s = this._esc(m.sentence);
       if (m.isClaim && m.citation) {
-        count++;
-        const panelId = `${this._id}-p${++pid}`;
-        const cite    = this._esc(m.citation);
+        claimCount++;
+        const num   = citMap.get(m.citation);
+        const srcId = `${id}-src${num}`;
         html += `<span class="va-claim">${s}<span class="va-pill va-pill-cite"
-          onclick="(function(el){var p=document.getElementById('${panelId}');p.classList.toggle('open');})(this)"
-          >[cite]</span></span><div class="va-cite-panel" id="${panelId}">${cite}</div> `;
+          onclick="(function(){
+            var el=document.getElementById('${srcId}');
+            el.scrollIntoView({behavior:'smooth',block:'nearest'});
+            el.classList.add('va-src-flash');
+            setTimeout(function(){el.classList.remove('va-src-flash');},1200);
+          })()">[${num}]</span></span> `;
       } else {
         html += `<span>${s}</span> `;
       }
     }
-    html += `<div class="va-footer"><span>📌 ${count} claim${count !== 1 ? 's' : ''} cited</span></div></div>`;
+
+    /* Sources block — each unique citation listed once */
+    if (refs.length) {
+      html += `<div class="va-sources">`;
+      for (let i = 0; i < refs.length; i++) {
+        html += `<div class="va-source-item" id="${id}-src${i + 1}">[${i + 1}] ${this._esc(refs[i])}</div>`;
+      }
+      html += `</div>`;
+    }
+
+    html += `<div class="va-footer">
+      <span>📌 ${claimCount} claim${claimCount !== 1 ? 's' : ''} cited &mdash; ${refs.length} unique source${refs.length !== 1 ? 's' : ''}</span>
+    </div></div>`;
+
     this._el.innerHTML = html;
   };
 
