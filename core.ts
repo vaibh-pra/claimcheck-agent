@@ -56,14 +56,6 @@ const MARK_EXAMPLES: Record<string, string> = {
   general:         "'Shannon entropy measures the average uncertainty in a probability distribution' is a claim. 'The result is 2.3 bits' is not (it is a computed value, not a verifiable assertion about how something works).",
 };
 
-const CITE_CTX: Record<string, string> = {
-  cybersecurity:   "cybersecurity, network security, botnet detection, intrusion detection, MITRE ATT&CK, CVE",
-  ppi_network:     "protein-protein interaction networks, bioinformatics, drug targets, UniProt, STRING database, systems biology",
-  crystallography: "crystallography, space groups, X-ray diffraction, Metal-Organic Frameworks, lattice symmetry",
-  social_network:  "social network analysis, community detection, influence propagation, network centrality",
-  finance_research:"financial fraud, anti-money laundering, wash trading, transaction networks, FATF typologies",
-  general:         "mathematics, information theory, computer science, physics, biology, engineering, and related fields",
-};
 
 export async function markClaims(responseText: string, domain: Domain | string = "general"): Promise<MarkedSentence[]> {
   const domainName = domain === "general" ? "general science and knowledge" : domain.replace(/_/g, " ");
@@ -115,43 +107,61 @@ export function shortlistClaims(marked: MarkedSentence[], maxClaims = 3, similar
   return marked.map(m => ({ sentence: m.sentence, isClaim: m.isClaim && selectedSet.has(m.sentence) }));
 }
 
+const ARXIV_STOP_WORDS = new Set([
+  "a","an","the","is","are","was","were","be","been","being","have","has","had",
+  "do","does","did","will","would","could","should","may","might","must","can",
+  "this","that","these","those","of","in","to","for","on","at","by","with",
+  "from","and","or","but","not","as","it","its","also","which","than","more",
+  "most","such","each","both","they","their","thus","hence","via","per","when",
+  "where","how","all","any","some","one","two","three","often","very","well",
+]);
+
+async function searchArxiv(claim: string): Promise<string | null> {
+  const terms = (claim.toLowerCase().match(/\b[a-z][a-z0-9\-]{2,}\b/g) || [])
+    .filter(w => !ARXIV_STOP_WORDS.has(w));
+  const query = terms.slice(0, 10).join(" ");
+  if (!query) return null;
+
+  try {
+    const url = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(query)}&max_results=1&sortBy=relevance`;
+    if (process.env.DEBUG === "1") console.log("[arXiv] query:", query);
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+    const xml = await res.text();
+
+    if (!xml.includes("<entry>")) return null;
+
+    const titleMatch     = xml.match(/<entry>[\s\S]*?<title>([\s\S]*?)<\/title>/);
+    const firstNameMatch = xml.match(/<author>\s*<name>([\s\S]*?)<\/name>/);
+    const publishedMatch = xml.match(/<published>([\s\S]*?)<\/published>/);
+    const idMatch        = xml.match(/<id>\s*https?:\/\/arxiv\.org\/abs\/([^\s<]+)\s*<\/id>/);
+
+    if (!titleMatch || !idMatch) return null;
+
+    const title    = titleMatch[1].trim().replace(/\s+/g, " ");
+    const year     = publishedMatch?.[1]?.slice(0, 4) ?? "";
+    const arxivId  = idMatch[1].trim();
+    const rawName  = firstNameMatch?.[1]?.trim() ?? "";
+    const lastName = rawName ? rawName.split(/\s+/).pop()! : "Unknown";
+    const author   = rawName.includes(" ") ? `${lastName} et al.` : rawName;
+
+    if (process.env.DEBUG === "1") console.log(`[arXiv] found: ${author} (${year}) arXiv:${arxivId}`);
+    return `${author}, "${title}", arXiv:${arxivId}${year ? `, ${year}` : ""}`;
+  } catch {
+    return null;
+  }
+}
+
 export async function findCitations(marked: MarkedSentence[], domain: Domain | string = "general"): Promise<CitedSentence[]> {
-  const domainName = domain.replace(/_/g, " ");
-  const ctx        = CITE_CTX[domain] ?? "graph theory, network science, combinatorics";
-  const claims     = marked.filter(m => m.isClaim);
+  const claims = marked.filter(m => m.isClaim);
   if (!claims.length) return marked.map(m => ({ ...m, citation: null }));
-  const list   = claims.map((m, i) => `${i + 1}. ${m.sentence}`).join("\n");
-  const prompt = `You are a citation agent for ${domainName}.
 
-For EACH numbered claim, find the best real source that directly supports that exact assertion in the context of ${ctx}.
+  const results = await Promise.all(claims.map(m => searchArxiv(m.sentence)));
 
-Accepted source types (in order of preference):
-1. Peer-reviewed journal paper or conference proceeding
-2. Widely-cited textbook (e.g. Cover & Thomas, Shannon & Weaver, Knuth)
-3. Official standard, RFC, or authoritative technical report
-4. Well-known reference work (e.g. encyclopaedia entry by a named authority)
-
-Rules:
-- The source must directly support the specific claim, not just the general area.
-- Return null ONLY if you genuinely cannot identify any real reliable source.
-- Do NOT fabricate titles, authors, or venues. If uncertain of the exact title, give the author and approximate year.
-- Citation format: Author(s), "Title or Chapter", Publisher/Venue, Year
-
-Return ONLY a JSON array, one object per claim in order. Plain ASCII. No markdown.
-[{"claimNumber": 1, "citation": "..."}, {"claimNumber": 2, "citation": null}]
-
-Claims:
-${list}`;
-  const raw    = await llm([{ role: "system", content: prompt }, { role: "user", content: "Return the JSON array now, one object per claim in order." }]);
-  if (process.env.DEBUG === "1") console.log("[findCitations] raw LLM output:", raw.slice(0, 500));
-  const parsed = parseJsonArray(raw);
-  const citMap = new Map<number, string | null>();
-  if (Array.isArray(parsed)) for (const r of parsed) if (r.claimNumber) citMap.set(Number(r.claimNumber), r.citation ?? null);
   let idx = 0;
   return marked.map(m => {
     if (!m.isClaim) return { ...m, citation: null };
-    idx++;
-    const cit = citMap.get(idx) ?? null;
-    return { sentence: m.sentence, isClaim: cit !== null, citation: cit };
+    const citation = results[idx++] ?? null;
+    return { sentence: m.sentence, isClaim: citation !== null, citation };
   });
 }
