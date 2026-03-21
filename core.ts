@@ -1,5 +1,5 @@
 /**
- * ClaimCheck Verification Agent — core logic
+ * Verification Agent — core logic (self-contained, no local imports)
  *
  * Exports three functions used by /api/mark-claims and /api/find-citations.
  * The canonical standalone package lives at: github.com/vaibh-pra/claimcheck-agent
@@ -121,21 +121,29 @@ export async function findCitations(marked: MarkedSentence[], domain: Domain | s
   const claims     = marked.filter(m => m.isClaim);
   if (!claims.length) return marked.map(m => ({ ...m, citation: null }));
   const list   = claims.map((m, i) => `${i + 1}. ${m.sentence}`).join("\n");
-  const prompt = `You are a citation agent for ${domainName} and graph theory.
+  const prompt = `You are a citation agent for ${domainName}.
 
-For EACH numbered claim, find a specific, real published paper or authoritative report that directly supports that exact assertion in the context of ${ctx}.
+For EACH numbered claim, find the best real source that directly supports that exact assertion in the context of ${ctx}.
+
+Accepted source types (in order of preference):
+1. Peer-reviewed journal paper or conference proceeding
+2. Widely-cited textbook (e.g. Cover & Thomas, Shannon & Weaver, Knuth)
+3. Official standard, RFC, or authoritative technical report
+4. Well-known reference work (e.g. encyclopaedia entry by a named authority)
 
 Rules:
-- Source must directly support the claim, not just the general topic.
-- If no real specific source exists, return null. Do NOT fabricate.
-- Citation format: FirstAuthor et al., "Exact Title", Venue, Year
+- The source must directly support the specific claim, not just the general area.
+- Return null ONLY if you genuinely cannot identify any real reliable source.
+- Do NOT fabricate titles, authors, or venues. If uncertain of the exact title, give the author and approximate year.
+- Citation format: Author(s), "Title or Chapter", Publisher/Venue, Year
 
-Return ONLY a JSON array, one object per claim in order. Plain ASCII.
+Return ONLY a JSON array, one object per claim in order. Plain ASCII. No markdown.
 [{"claimNumber": 1, "citation": "..."}, {"claimNumber": 2, "citation": null}]
 
 Claims:
 ${list}`;
   const raw    = await llm([{ role: "system", content: prompt }, { role: "user", content: "Return the JSON array now, one object per claim in order." }]);
+  if (process.env.DEBUG === "1") console.log("[findCitations] raw LLM output:", raw.slice(0, 500));
   const parsed = parseJsonArray(raw);
   const citMap = new Map<number, string | null>();
   if (Array.isArray(parsed)) for (const r of parsed) if (r.claimNumber) citMap.set(Number(r.claimNumber), r.citation ?? null);
