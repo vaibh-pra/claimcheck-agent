@@ -1,16 +1,12 @@
 /**
- * Verification Agent — core logic (self-contained, no local imports)
+ * Verifi — core logic (self-contained, no local imports)
  *
  * Exports three functions used by /api/mark-claims and /api/find-citations.
- * The canonical standalone package lives at: github.com/vaibh-pra/claimcheck-agent
+ * The canonical standalone package lives at: github.com/vaibh-pra/verifi-agent
  */
 
 const OLLAMA_BASE_URL = "https://ollama.com/v1";
 const OLLAMA_MODEL    = "nemotron-3-super:cloud";
-
-export type Domain =
-  | "cybersecurity" | "ppi_network" | "crystallography"
-  | "social_network" | "finance_research" | "general";
 
 export interface MarkedSentence { sentence: string; isClaim: boolean; }
 export interface CitedSentence  { sentence: string; isClaim: boolean; citation: string | null; }
@@ -88,27 +84,24 @@ function parseJsonArray(raw: string): any[] | null {
   return results.length > 0 ? results : null;
 }
 
-const MARK_EXAMPLES: Record<string, string> = {
-  cybersecurity:   "'Botnets use star topologies for C2 communication' is a claim. 'The group order is 36' is not.",
-  ppi_network:     "'PLK1 localizes to centrosomes via its Polo-box domain' is a claim. 'Orbit 1 has nodes 0 and 5' is not.",
-  crystallography: "'MOFs with dia topology exhibit high gas storage capacity' is a claim. 'The graph has 12 vertices' is not.",
-  social_network:  "'Nodes in the same orbit occupy structurally equivalent positions' is a claim. 'There are 3 generators' is not.",
-  finance_research:"'Circular transaction patterns are a hallmark of wash trading' is a claim. 'The automorphism group order is 288' is not.",
-  general:         "'Shannon entropy measures the average uncertainty in a probability distribution' is a claim. 'The result is 2.3 bits' is not (it is a computed value, not a verifiable assertion about how something works).",
-};
-
-
-export async function markClaims(responseText: string, domain: Domain | string = "general"): Promise<MarkedSentence[]> {
-  const domainName = domain === "general" ? "general science and knowledge" : domain.replace(/_/g, " ");
-  const fieldCtx   = domain === "general" ? "" : " and graph theory";
-  const examples   = MARK_EXAMPLES[domain] ?? MARK_EXAMPLES["general"]!;
-  const prompt = `You are a claim identification agent specialising in ${domainName}${fieldCtx}.
+export async function markClaims(responseText: string, _domain?: string): Promise<MarkedSentence[]> {
+  const prompt = `You are Verifi — an AI claim identification agent.
 
 Read the text below sentence by sentence. For each sentence decide: CLAIM or NOT A CLAIM.
 
-CLAIM: A sentence asserting a verifiable real-world fact — how a named technique works, what a pattern means in ${domainName}, or established scientific knowledge. (${examples})
+CLAIM: A sentence asserting a specific, verifiable fact — how a named technique, algorithm, or system works; an established scientific finding; a measurable property; or a relationship supported by literature.
+Examples:
+- "Arithmetic coding approaches the theoretical entropy limit for data compression." → CLAIM
+- "Shannon entropy measures the average uncertainty in a probability distribution." → CLAIM
+- "Neurons in the hippocampus play a key role in spatial memory formation." → CLAIM
 
-NOT A CLAIM: Transition phrases, questions, greetings, list/table headers, sentences restating graph results, AND any sentence about the specific graph structure from this analysis (orbit sizes, group order, generators, node IDs, edge counts) — those are already grounded in exact computation.
+NOT A CLAIM: Transition phrases, rhetorical questions, greetings, list or table headers, computed numerical results, personal opinions, meta-commentary about the response, or vague encouragements.
+Examples:
+- "Here is a breakdown of how this works." → NOT A CLAIM
+- "Let me explain this step by step." → NOT A CLAIM
+- "The result is 2.3 bits." → NOT A CLAIM (a computed value, not a verifiable assertion)
+- "That's a great question!" → NOT A CLAIM
+- "In summary..." → NOT A CLAIM
 
 RULES:
 - Return ONLY a valid JSON array. No markdown, no preamble.
@@ -195,7 +188,7 @@ async function searchArxiv(claim: string): Promise<string | null> {
   }
 }
 
-export async function findCitations(marked: MarkedSentence[], domain: Domain | string = "general"): Promise<CitedSentence[]> {
+export async function findCitations(marked: MarkedSentence[], _domain?: string): Promise<CitedSentence[]> {
   const claims = marked.filter(m => m.isClaim);
   if (!claims.length) return marked.map(m => ({ ...m, citation: null }));
 
