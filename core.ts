@@ -1,8 +1,8 @@
 /**
- * Verifi — core logic (self-contained, no local imports)
+ * Veriphy — core logic (self-contained, no local imports)
  *
  * Exports three functions used by /api/mark-claims and /api/find-citations.
- * The canonical standalone package lives at: github.com/vaibh-pra/verifi-agent
+ * The canonical standalone package lives at: github.com/vaibh-pra/veriphy-agent
  */
 
 const OLLAMA_BASE_URL = "https://ollama.com/v1";
@@ -85,7 +85,7 @@ function parseJsonArray(raw: string): any[] | null {
 }
 
 export async function markClaims(responseText: string, _domain?: string): Promise<MarkedSentence[]> {
-  const prompt = `You are Verifi — an AI claim identification agent.
+  const prompt = `You are Veriphy — an AI claim identification agent.
 
 Read the text below sentence by sentence. For each sentence decide: CLAIM or NOT A CLAIM.
 
