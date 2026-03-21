@@ -5,7 +5,7 @@
  * The canonical standalone package lives at: github.com/vaibh-pra/veriphy-agent
  */
 
-const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "https://ollama.com/v1";
+const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://localhost:11434/v1";
 const OLLAMA_MODEL    = process.env.OLLAMA_MODEL    || "nemotron-3-super:cloud";
 
 export interface MarkedSentence { sentence: string; isClaim: boolean; }
