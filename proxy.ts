@@ -1,5 +1,5 @@
 /**
- * ClaimCheck Proxy Server
+ * Verifi Proxy Server
  *
  * Sits transparently between you and any Ollama or OpenAI-compatible LLM.
  * Every response passes through the three-step verification pipeline before
@@ -14,7 +14,7 @@
  *        ollama run llama3 "explain botnets"
  *
  * Environment variables:
- *   OLLAMA_API_KEY      API key used ONLY for ClaimCheck's internal Nemotron calls
+ *   OLLAMA_API_KEY      API key used ONLY for Verifi's internal Nemotron calls
  *   REAL_LLM_BASE_URL   Where to forward LLM requests (default: http://localhost:11434)
  *   REAL_LLM_API_KEY    Only set for cloud endpoints needing their own key (OpenAI etc.)
  *   PROXY_PORT          Port this proxy listens on (default: 4001)
@@ -23,7 +23,7 @@
  */
 
 import express, { Request } from "express";
-import { markClaims, shortlistClaims, findCitations, Domain } from "./core";
+import { markClaims, shortlistClaims, findCitations } from "./core";
 
 const app          = express();
 const PROXY_PORT   = parseInt(process.env.PROXY_PORT || "4001", 10);
@@ -35,7 +35,7 @@ const DEBUG        = process.env.DEBUG === "1";
 app.use(express.json({ limit: "10mb" }));
 
 function log(...args: any[]) {
-  if (DEBUG) console.log("[ClaimCheck]", ...args);
+  if (DEBUG) console.log("[Verifi]", ...args);
 }
 
 function buildForwardHeaders(req: Request): Record<string, string> {
@@ -84,11 +84,11 @@ function inlineCitations(cited: Awaited<ReturnType<typeof findCitations>>): stri
   return body + refBlock;
 }
 
-async function runClaimCheck(text: string, domain: Domain): Promise<string> {
-  console.log(`[ClaimCheck] Step 1: marking claims (domain=${domain}, chars=${text.length})`);
+async function runVerifi(text: string, domain: string): Promise<string> {
+  console.log(`[Verifi] Step 1: marking claims (domain=${domain}, chars=${text.length})`);
   const marked = await markClaims(text, domain);
   const claimCount = marked.filter(m => m.isClaim).length;
-  console.log(`[ClaimCheck] Step 1 done: ${marked.length} sentences, ${claimCount} claims`);
+  console.log(`[Verifi] Step 1 done: ${marked.length} sentences, ${claimCount} claims`);
 
   if (DEBUG) {
     marked.filter(m => m.isClaim).forEach((m, i) =>
@@ -97,21 +97,21 @@ async function runClaimCheck(text: string, domain: Domain): Promise<string> {
   }
 
   if (claimCount === 0) {
-    console.log("[ClaimCheck] No claims found — returning original response unchanged");
+    console.log("[Verifi] No claims found — returning original response unchanged");
     return text;
   }
 
   const shortlisted = shortlistClaims(marked);
   const shortCount  = shortlisted.filter(m => m.isClaim).length;
-  console.log(`[ClaimCheck] Step 2 done: shortlisted ${shortCount} claim(s) for citation`);
+  console.log(`[Verifi] Step 2 done: shortlisted ${shortCount} claim(s) for citation`);
 
-  console.log("[ClaimCheck] Step 3: finding citations...");
+  console.log("[Verifi] Step 3: finding citations...");
   const cited    = await findCitations(shortlisted, domain);
   const citCount = cited.filter(c => c.isClaim && c.citation).length;
 
   // Count unique citations
   const uniqueCitations = new Set(cited.filter(c => c.citation).map(c => c.citation));
-  console.log(`[ClaimCheck] Step 3 done: ${citCount} claim(s) cited, ${uniqueCitations.size} unique source(s)`);
+  console.log(`[Verifi] Step 3 done: ${citCount} claim(s) cited, ${uniqueCitations.size} unique source(s)`);
 
   if (DEBUG) {
     [...uniqueCitations].forEach((c, i) => console.log(`  source[${i + 1}]: ${c}`));
@@ -127,7 +127,7 @@ app.get("/health", (_req, res) => {
 
 /* ── OpenAI-compatible: POST /v1/chat/completions ────────────────────────── */
 app.post("/v1/chat/completions", async (req, res) => {
-  const domain = (req.headers["x-claimcheck-domain"] as Domain) || DEF_DOMAIN;
+  const domain = (req.headers["x-verifi-domain"] as string | undefined) || DEF_DOMAIN;
   try {
     log("→ /v1/chat/completions");
     const forwardRes = await fetch(`${REAL_LLM_URL}/v1/chat/completions`, {
@@ -138,20 +138,20 @@ app.post("/v1/chat/completions", async (req, res) => {
 
     const data     = await forwardRes.json() as any;
     const raw      = data.choices?.[0]?.message?.content ?? "";
-    const verified = await runClaimCheck(raw, domain);
+    const verified = await runVerifi(raw, domain);
 
     data.choices[0].message.content = verified;
     data.choices[0].finish_reason   = "stop";
     res.json(data);
   } catch (err: any) {
-    console.error("[ClaimCheck] Error:", err.message);
+    console.error("[Verifi] Error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
 /* ── Ollama native: POST /api/chat ──────────────────────────────────────── */
 app.post("/api/chat", async (req, res) => {
-  const domain = (req.headers["x-claimcheck-domain"] as Domain) || DEF_DOMAIN;
+  const domain = (req.headers["x-verifi-domain"] as string | undefined) || DEF_DOMAIN;
   try {
     log("→ /api/chat");
     const forwardRes = await fetch(`${REAL_LLM_URL}/api/chat`, {
@@ -162,19 +162,19 @@ app.post("/api/chat", async (req, res) => {
 
     const data     = await forwardRes.json() as any;
     const raw      = data.message?.content ?? "";
-    const verified = await runClaimCheck(raw, domain);
+    const verified = await runVerifi(raw, domain);
 
     data.message.content = verified;
     res.json(data);
   } catch (err: any) {
-    console.error("[ClaimCheck] Error:", err.message);
+    console.error("[Verifi] Error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
 /* ── Ollama native: POST /api/generate ──────────────────────────────────── */
 app.post("/api/generate", async (req, res) => {
-  const domain = (req.headers["x-claimcheck-domain"] as Domain) || DEF_DOMAIN;
+  const domain = (req.headers["x-verifi-domain"] as string | undefined) || DEF_DOMAIN;
   try {
     log("→ /api/generate");
     const forwardRes = await fetch(`${REAL_LLM_URL}/api/generate`, {
@@ -185,12 +185,12 @@ app.post("/api/generate", async (req, res) => {
 
     const data     = await forwardRes.json() as any;
     const raw      = data.response ?? "";
-    const verified = await runClaimCheck(raw, domain);
+    const verified = await runVerifi(raw, domain);
 
     data.response = verified;
     res.json(data);
   } catch (err: any) {
-    console.error("[ClaimCheck] Error:", err.message);
+    console.error("[Verifi] Error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -210,10 +210,10 @@ app.all("*", async (req, res) => {
 });
 
 app.listen(PROXY_PORT, "0.0.0.0", () => {
-  console.log(`[ClaimCheck Proxy] listening on port ${PROXY_PORT}`);
-  console.log(`[ClaimCheck Proxy] forwarding to     ${REAL_LLM_URL}`);
-  console.log(`[ClaimCheck Proxy] forward auth key:  ${FORWARD_KEY ? "set (REAL_LLM_API_KEY)" : "not set — passing original headers"}`);
-  console.log(`[ClaimCheck Proxy] default domain:    ${DEF_DOMAIN}`);
-  console.log(`[ClaimCheck Proxy] debug logging:     ${DEBUG ? "ON" : "OFF (set DEBUG=1 to enable)"}`);
-  console.log(`[ClaimCheck Proxy] in your shell:     export OLLAMA_HOST=http://localhost:${PROXY_PORT}`);
+  console.log(`[Verifi Proxy] listening on port ${PROXY_PORT}`);
+  console.log(`[Verifi Proxy] forwarding to     ${REAL_LLM_URL}`);
+  console.log(`[Verifi Proxy] forward auth key:  ${FORWARD_KEY ? "set (REAL_LLM_API_KEY)" : "not set — passing original headers"}`);
+  console.log(`[Verifi Proxy] default domain:    ${DEF_DOMAIN}`);
+  console.log(`[Verifi Proxy] debug logging:     ${DEBUG ? "ON" : "OFF (set DEBUG=1 to enable)"}`);
+  console.log(`[Verifi Proxy] in your shell:     export OLLAMA_HOST=http://localhost:${PROXY_PORT}`);
 });
