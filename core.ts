@@ -40,21 +40,28 @@ async function llm(messages: { role: string; content: string }[]): Promise<strin
 }
 
 function parseJsonArray(raw: string): any[] | null {
-  // Search for the first array-of-objects: skip scalar arrays like [1], [citation needed]
+  // Skip scalar arrays like [1] or [citation needed] — look for start of object array
   const start = raw.search(/\[\s*\{/);
   if (start === -1) return null;
 
-  // Balance brackets to find the exact end of the array
-  let depth = 0, end = -1;
+  // String-aware bracket balancer: ignore [ and ] that appear inside JSON string values
+  let depth = 0, end = -1, inStr = false, esc = false;
   for (let i = start; i < raw.length; i++) {
-    if (raw[i] === "[") depth++;
-    else if (raw[i] === "]") { depth--; if (depth === 0) { end = i; break; } }
+    const ch = raw[i];
+    if (esc)             { esc = false; continue; }
+    if (ch === "\\" && inStr) { esc = true;  continue; }
+    if (ch === '"')      { inStr = !inStr; continue; }
+    if (inStr)           continue;            // inside a string — ignore brackets
+    if (ch === "[")      depth++;
+    else if (ch === "]") { depth--; if (depth === 0) { end = i; break; } }
   }
   if (end === -1) return null;
 
   const candidate = raw.slice(start, end + 1);
+  // Try 1: as-is
   try { return JSON.parse(candidate); } catch (_) {}
-  try { return JSON.parse(candidate.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")); } catch (_) {}
+  // Try 2: replace unescaped control chars (incl. raw newlines inside string values)
+  try { return JSON.parse(candidate.replace(/[\x00-\x1F\x7F]/g, " ")); } catch (_) {}
   return null;
 }
 
