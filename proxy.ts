@@ -54,14 +54,26 @@ function buildForwardHeaders(req: Request): Record<string, string> {
   return h;
 }
 
+/**
+ * Deduplicated citation rendering.
+ * If two claims share the exact same citation string, they get the same [N]
+ * and that source is listed only once in the Sources block.
+ */
 function inlineCitations(cited: Awaited<ReturnType<typeof findCitations>>): string {
-  const refs: string[] = [];
-  let idx = 0;
+  const citMap = new Map<string, number>(); // citation → ref number
+  const refs: string[] = [];               // unique citations in order
+
   const lines = cited.map(s => {
     if (s.isClaim && s.citation) {
-      refs.push(s.citation);
-      idx++;
-      return `${s.sentence} [${idx}]`;
+      let num: number;
+      if (citMap.has(s.citation)) {
+        num = citMap.get(s.citation)!;
+      } else {
+        refs.push(s.citation);
+        num = refs.length;
+        citMap.set(s.citation, num);
+      }
+      return `${s.sentence} [${num}]`;
     }
     return s.sentence;
   });
@@ -96,12 +108,13 @@ async function runClaimCheck(text: string, domain: Domain): Promise<string> {
   console.log("[ClaimCheck] Step 3: finding citations...");
   const cited    = await findCitations(shortlisted, domain);
   const citCount = cited.filter(c => c.isClaim && c.citation).length;
-  console.log(`[ClaimCheck] Step 3 done: ${citCount} citation(s) found`);
+
+  // Count unique citations
+  const uniqueCitations = new Set(cited.filter(c => c.citation).map(c => c.citation));
+  console.log(`[ClaimCheck] Step 3 done: ${citCount} claim(s) cited, ${uniqueCitations.size} unique source(s)`);
 
   if (DEBUG) {
-    cited.filter(c => c.citation).forEach((c, i) =>
-      console.log(`  citation[${i}]: ${c.citation}`)
-    );
+    [...uniqueCitations].forEach((c, i) => console.log(`  source[${i + 1}]: ${c}`));
   }
 
   return inlineCitations(cited);
