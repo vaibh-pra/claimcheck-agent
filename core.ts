@@ -18,7 +18,7 @@ async function llm(messages: { role: string; content: string }[]): Promise<strin
     if (attempt > 0) await new Promise(r => setTimeout(r, 1000 * attempt));
     try {
       const ctrl  = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 120_000);
+      const timer = setTimeout(() => ctrl.abort(), 240_000);
       const res   = await fetch(`${OLLAMA_BASE_URL}/chat/completions`, {
         method:  "POST",
         headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
@@ -30,7 +30,10 @@ async function llm(messages: { role: string; content: string }[]): Promise<strin
       if (!res.ok) throw new Error(`Ollama error ${res.status}`);
       const data = await res.json() as any;
       return data.choices?.[0]?.message?.content ?? "";
-    } catch (e: any) { if (attempt >= 3) throw e; }
+    } catch (e: any) {
+      if (e.name === "AbortError") throw new Error("Nemotron timed out after 4 minutes — try a shorter prompt");
+      if (attempt >= 3) throw e;
+    }
   }
   throw new Error("Ollama unavailable after retries");
 }
@@ -84,7 +87,20 @@ function parseJsonArray(raw: string): any[] | null {
   return results.length > 0 ? results : null;
 }
 
+const MAX_MARK_CHARS = 5000;
+
+function truncateToSentenceBoundary(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  const cut = text.slice(0, maxChars);
+  const lastBoundary = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("! "), cut.lastIndexOf("? "), cut.lastIndexOf("\n"));
+  return lastBoundary > maxChars * 0.5 ? cut.slice(0, lastBoundary + 1) : cut;
+}
+
 export async function markClaims(responseText: string, _domain?: string): Promise<MarkedSentence[]> {
+  const text = truncateToSentenceBoundary(responseText, MAX_MARK_CHARS);
+  if (text.length < responseText.length && process.env.DEBUG === "1")
+    console.log(`[Veriphy] Input truncated ${responseText.length} → ${text.length} chars for claim marking`);
+
   const prompt = `You are Veriphy — an AI claim identification agent.
 
 Read the text below sentence by sentence. For each sentence decide: CLAIM or NOT A CLAIM.
@@ -111,7 +127,7 @@ RULES:
 [{"sentence":"...", "isClaim": true}, ...]
 
 Text:
-${responseText}`;
+${text}`;
   const raw    = await llm([{ role: "system", content: prompt }, { role: "user", content: "Return the JSON array now." }]);
   if (process.env.DEBUG === "1") console.log("[markClaims] raw LLM output (first 600 chars):", raw.slice(0, 600));
   const parsed = parseJsonArray(raw);
