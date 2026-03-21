@@ -1,4 +1,4 @@
-# Verifi
+# Veriphy
 
 A standalone, three-step agent that post-processes any LLM response to identify factual claims, shortlist the most distinctive ones, and retrieve real arXiv paper citations for each.
 
@@ -13,7 +13,7 @@ LLM responses mix two very different kinds of sentences:
 - **Factual claims** — assertions about how algorithms work, what techniques mean, established scientific findings. These *can* be wrong or hallucinated.
 - **Everything else** — transitions, rhetorical questions, computed results, opinions, meta-commentary. These need no verification.
 
-Verifi identifies the first kind and traces each one back to a real arXiv paper.
+Veriphy identifies the first kind and traces each one back to a real arXiv paper.
 
 ---
 
@@ -65,7 +65,7 @@ verifi-agent/
   core.ts        All logic — three exported functions, no framework dependency
   server.ts      Standalone API server (port 4000)
   proxy.ts       Transparent LLM proxy (port 4001) — intercepts before terminal display
-  cli.ts         CLI tool — pipe any LLM output through Verifi in the terminal
+  cli.ts         CLI tool — pipe any LLM output through Veriphy in the terminal
   client.js      Drop-in frontend widget for any chatbot page (zero dependencies)
   agent.json     Marketplace manifest — capabilities, schemas, env requirements
   package.json   npm package definition
@@ -83,8 +83,8 @@ The proxy sits between you and Ollama or any cloud LLM. Every response is verifi
 ```bash
 # 1. Start the proxy
 OLLAMA_API_KEY=your_key npm run proxy
-# [Verifi Proxy] listening on port 4001
-# [Verifi Proxy] forwarding to http://localhost:11434
+# [Veriphy Proxy] listening on port 4001
+# [Veriphy Proxy] forwarding to http://localhost:11434
 
 # 2. Redirect your client to the proxy
 export OLLAMA_HOST=http://localhost:4001
@@ -102,7 +102,7 @@ OLLAMA_API_KEY=your_nemotron_key \
 npm run proxy
 ```
 
-Note: `OLLAMA_API_KEY` is used **only** for Verifi's internal Nemotron calls (Step 1).
+Note: `OLLAMA_API_KEY` is used **only** for Veriphy's internal Nemotron calls (Step 1).
 `REAL_LLM_API_KEY` is forwarded to the upstream LLM and is optional for local Ollama.
 
 **Override domain hint per request:**
@@ -119,11 +119,11 @@ curl -X POST http://localhost:4001/v1/chat/completions \
 ```bash
 DEBUG=1 OLLAMA_API_KEY=your_key npm run proxy
 # Shows:
-# [Verifi] Step 1: marking claims (chars=4209)
-# [Verifi] Step 1 done: 55 sentences, 24 claims
+# [Veriphy] Step 1: marking claims (chars=4209)
+# [Veriphy] Step 1 done: 55 sentences, 24 claims
 # [arXiv] query: arithmetic coding huffman compression efficiency
 # [arXiv] found: Hashimoto et al. (2022) arXiv:2209.08874v1
-# [Verifi] Step 3 done: 3 claim(s) cited, 3 unique source(s)
+# [Veriphy] Step 3 done: 3 claim(s) cited, 3 unique source(s)
 ```
 
 ---
@@ -131,7 +131,7 @@ DEBUG=1 OLLAMA_API_KEY=your_key npm run proxy
 ### Mode 2 — CLI
 
 ```bash
-# Pipe any LLM output through Verifi
+# Pipe any LLM output through Veriphy
 ollama run llama3 "Explain Shannon entropy" | npx tsx cli.ts
 ```
 
@@ -201,7 +201,7 @@ LLMs hallucinate citations — fabricated titles, wrong years, non-existent venu
 A claim with a fabricated citation is worse than no citation at all. If arXiv finds nothing, the sentence silently reverts to plain text.
 
 **Why buffer the full response before display?**
-Verifi needs the complete response to identify which sentences are claims. Buffering gives a clean single-pass annotated result. The raw unverified text is never shown.
+Veriphy needs the complete response to identify which sentences are claims. Buffering gives a clean single-pass annotated result. The raw unverified text is never shown.
 
 ---
 
