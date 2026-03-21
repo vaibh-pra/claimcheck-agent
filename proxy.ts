@@ -212,6 +212,10 @@ app.all("*", async (req, res) => {
 app.listen(PROXY_PORT, "0.0.0.0", () => {
   console.log(`[Veriphy Proxy] listening on port ${PROXY_PORT}`);
   console.log(`[Veriphy Proxy] forwarding to     ${REAL_LLM_URL}`);
+  const agentBase = process.env.OLLAMA_BASE_URL || "http://localhost:11434/v1";
+  const agentKey  = process.env.OLLAMA_API_KEY  || "";
+  console.log(`[Veriphy Proxy] agent LLM base:    ${agentBase}`);
+  console.log(`[Veriphy Proxy] agent LLM key:     ${agentKey ? "set (OLLAMA_API_KEY)" : "not set"}`);
   console.log(`[Veriphy Proxy] forward auth key:  ${FORWARD_KEY ? "set (REAL_LLM_API_KEY)" : "not set — passing original headers"}`);
   console.log(`[Veriphy Proxy] default domain:    ${DEF_DOMAIN}`);
   console.log(`[Veriphy Proxy] debug logging:     ${DEBUG ? "ON" : "OFF (set DEBUG=1 to enable)"}`);
