@@ -170,16 +170,69 @@ const ARXIV_STOP_WORDS = new Set([
   "from","and","or","but","not","as","it","its","also","which","than","more",
   "most","such","each","both","they","their","thus","hence","via","per","when",
   "where","how","all","any","some","one","two","three","often","very","well",
+  "show","shows","shown","use","used","uses","using","based","approach","method",
+  "result","results","work","works","paper","study","propose","provides","achieve",
 ]);
 
-async function searchArxiv(claim: string): Promise<string | null> {
-  const terms = (claim.toLowerCase().match(/\b[a-z][a-z0-9\-]{2,}\b/g) || [])
-    .filter(w => !ARXIV_STOP_WORDS.has(w));
-  const query = terms.slice(0, 10).join(" ");
-  if (!query) return null;
+// Build a quoted phrase query from the claim using n-gram extraction
+function buildArxivQuery(claim: string): { primary: string; fallback: string } {
+  const words = (claim.toLowerCase().match(/\b[a-z][a-z0-9]{1,}\b/g) || []);
+  const isKey = (w: string) => !ARXIV_STOP_WORDS.has(w) && w.length > 2;
 
+  // Score a phrase by how many key words it contains
+  const score = (ws: string[]) => ws.filter(isKey).length;
+
+  // Extract scored trigrams (need at least 2 key words)
+  type Phrase = { text: string; ws: string[]; sc: number };
+  const candidates: Phrase[] = [];
+  for (let i = 0; i <= words.length - 3; i++) {
+    const ws = [words[i], words[i+1], words[i+2]];
+    const sc = score(ws);
+    if (sc >= 2) candidates.push({ text: ws.join(" "), ws, sc });
+  }
+  // Extract scored bigrams (need at least 1 key word)
+  for (let i = 0; i <= words.length - 2; i++) {
+    const ws = [words[i], words[i+1]];
+    const sc = score(ws);
+    if (sc >= 1) candidates.push({ text: ws.join(" "), ws, sc });
+  }
+
+  // Sort highest-scoring first
+  candidates.sort((a, b) => b.sc - a.sc);
+
+  // Two phrases overlap if they share a consecutive word pair (a bigram)
+  function sharesABigram(ws1: string[], ws2: string[]): boolean {
+    const bigrams1 = new Set<string>();
+    for (let i = 0; i < ws1.length - 1; i++) bigrams1.add(ws1[i] + "|" + ws1[i+1]);
+    for (let i = 0; i < ws2.length - 1; i++) {
+      if (bigrams1.has(ws2[i] + "|" + ws2[i+1])) return true;
+    }
+    return false;
+  }
+
+  // Pick up to 3 non-overlapping highest-scoring phrases
+  const selected: Phrase[] = [];
+  for (const c of candidates) {
+    if (selected.length >= 3) break;
+    if (!selected.some(s => sharesABigram(s.ws, c.ws))) selected.push(c);
+  }
+
+  const singles = words.filter(isKey);
+
+  if (selected.length === 0) {
+    const kw = singles.slice(0, 6).join(" ");
+    return { primary: `all:${kw}`, fallback: `ti:${singles.slice(0, 4).join(" ")}` };
+  }
+
+  const quoted   = selected.map(p => `"${p.text}"`).join(" AND ");
+  const primary  = `abs:${quoted}`;
+  const fallback = `all:${singles.slice(0, 6).join(" ")}`;
+  return { primary, fallback };
+}
+
+async function runArxivQuery(query: string): Promise<string | null> {
   try {
-    const url = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(query)}&max_results=1&sortBy=relevance`;
+    const url = `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(query)}&max_results=1&sortBy=relevance`;
     if (process.env.DEBUG === "1") console.log("[arXiv] query:", query);
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return null;
@@ -205,6 +258,12 @@ async function searchArxiv(claim: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+async function searchArxiv(claim: string): Promise<string | null> {
+  const { primary, fallback } = buildArxivQuery(claim);
+  // Try precise phrase query first, fall back to broad keyword search
+  return (await runArxivQuery(primary)) ?? (await runArxivQuery(fallback));
 }
 
 export async function findCitations(marked: MarkedSentence[], _domain?: string): Promise<CitedSentence[]> {
