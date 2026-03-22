@@ -2,9 +2,10 @@
 
 const $ = id => document.getElementById(id);
 
-// ── Persist API base URL ────────────────────────────────────────────────────
+// ── Persist API base URL (default: localhost:4000) ──────────────────────────
+const DEFAULT_BASE = 'http://localhost:4000';
 chrome.storage.local.get('apiBase', ({ apiBase }) => {
-  if (apiBase) $('apiBase').value = apiBase;
+  $('apiBase').value = apiBase || DEFAULT_BASE;
 });
 
 $('apiBase').addEventListener('change', () => {
