@@ -267,24 +267,32 @@ function parseArxivEntry(entryXml: string): string | null {
 
 async function runArxivQuery(query: string, maxResults = 4): Promise<string[]> {
   try {
-    const url = `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(query)}&max_results=${maxResults}&sortBy=submittedDate&sortOrder=ascending`;
+    // Fetch 3x more by relevance so we have candidates to reorder
+    const fetchCount = maxResults * 3;
+    const url = `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(query)}&max_results=${fetchCount}&sortBy=relevance`;
     if (process.env.DEBUG === "1") console.log("[arXiv] query:", query);
     const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
     if (!res.ok) return [];
     const xml = await res.text();
     if (!xml.includes("<entry>")) return [];
 
-    // Split on <entry> boundaries; first element is the feed header, skip it
+    // Parse all candidates
     const entries = xml.split("<entry>").slice(1);
-    const citations: string[] = [];
+    const all: string[] = [];
     for (const entry of entries) {
       const citation = parseArxivEntry(entry);
-      if (citation) {
-        if (process.env.DEBUG === "1") console.log(`[arXiv] found: ${citation}`);
-        citations.push(citation);
-      }
-      if (citations.length >= maxResults) break;
+      if (citation) all.push(citation);
     }
+
+    // Sort by year ascending (oldest first), fall back to 9999 if no year
+    all.sort((a, b) => {
+      const ya = parseInt(a.match(/, (\d{4})$/)?.[1] ?? "9999");
+      const yb = parseInt(b.match(/, (\d{4})$/)?.[1] ?? "9999");
+      return ya - yb;
+    });
+
+    const citations = all.slice(0, maxResults);
+    if (process.env.DEBUG === "1") citations.forEach(c => console.log(`[arXiv] found: ${c}`));
     return citations;
   } catch {
     return [];
