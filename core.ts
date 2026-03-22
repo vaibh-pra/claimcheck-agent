@@ -13,7 +13,7 @@ const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://localhost:11434/v
 const OLLAMA_MODEL    = process.env.OLLAMA_MODEL    || "nemotron-3-super:cloud";
 
 export interface MarkedSentence { sentence: string; isClaim: boolean; }
-export interface CitedSentence  { sentence: string; isClaim: boolean; citation: string | null; }
+export interface CitedSentence  { sentence: string; isClaim: boolean; citations: string[]; }
 
 // ── LLM call (Step 1 only) ───────────────────────────────────────────────────
 
@@ -247,52 +247,68 @@ function buildArxivQuery(claim: string): { primary: string; fallback: string } {
   return { primary, fallback };
 }
 
-async function runArxivQuery(query: string): Promise<string | null> {
+function parseArxivEntry(entryXml: string): string | null {
+  const titleMatch     = entryXml.match(/<title>([\s\S]*?)<\/title>/);
+  const firstNameMatch = entryXml.match(/<author>\s*<name>([\s\S]*?)<\/name>/);
+  const publishedMatch = entryXml.match(/<published>([\s\S]*?)<\/published>/);
+  const idMatch        = entryXml.match(/<id>\s*https?:\/\/arxiv\.org\/abs\/([^\s<]+)\s*<\/id>/);
+
+  if (!titleMatch || !idMatch) return null;
+
+  const title    = titleMatch[1].trim().replace(/\s+/g, " ");
+  const year     = publishedMatch?.[1]?.slice(0, 4) ?? "";
+  const arxivId  = idMatch[1].trim();
+  const rawName  = firstNameMatch?.[1]?.trim() ?? "";
+  const lastName = rawName ? rawName.split(/\s+/).pop()! : "Unknown";
+  const author   = rawName.includes(" ") ? `${lastName} et al.` : rawName;
+
+  return `${author}, "${title}", arXiv:${arxivId}${year ? `, ${year}` : ""}`;
+}
+
+async function runArxivQuery(query: string, maxResults = 4): Promise<string[]> {
   try {
-    const url = `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(query)}&max_results=1&sortBy=relevance`;
+    const url = `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(query)}&max_results=${maxResults}&sortBy=relevance`;
     if (process.env.DEBUG === "1") console.log("[arXiv] query:", query);
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    if (!res.ok) return null;
+    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return [];
     const xml = await res.text();
-    if (!xml.includes("<entry>")) return null;
+    if (!xml.includes("<entry>")) return [];
 
-    const titleMatch     = xml.match(/<entry>[\s\S]*?<title>([\s\S]*?)<\/title>/);
-    const firstNameMatch = xml.match(/<author>\s*<name>([\s\S]*?)<\/name>/);
-    const publishedMatch = xml.match(/<published>([\s\S]*?)<\/published>/);
-    const idMatch        = xml.match(/<id>\s*https?:\/\/arxiv\.org\/abs\/([^\s<]+)\s*<\/id>/);
-
-    if (!titleMatch || !idMatch) return null;
-
-    const title    = titleMatch[1].trim().replace(/\s+/g, " ");
-    const year     = publishedMatch?.[1]?.slice(0, 4) ?? "";
-    const arxivId  = idMatch[1].trim();
-    const rawName  = firstNameMatch?.[1]?.trim() ?? "";
-    const lastName = rawName ? rawName.split(/\s+/).pop()! : "Unknown";
-    const author   = rawName.includes(" ") ? `${lastName} et al.` : rawName;
-
-    if (process.env.DEBUG === "1") console.log(`[arXiv] found: ${author} (${year}) arXiv:${arxivId}`);
-    return `${author}, "${title}", arXiv:${arxivId}${year ? `, ${year}` : ""}`;
+    // Split on <entry> boundaries; first element is the feed header, skip it
+    const entries = xml.split("<entry>").slice(1);
+    const citations: string[] = [];
+    for (const entry of entries) {
+      const citation = parseArxivEntry(entry);
+      if (citation) {
+        if (process.env.DEBUG === "1") console.log(`[arXiv] found: ${citation}`);
+        citations.push(citation);
+      }
+      if (citations.length >= maxResults) break;
+    }
+    return citations;
   } catch {
-    return null;
+    return [];
   }
 }
 
-async function searchArxiv(claim: string): Promise<string | null> {
+async function searchArxiv(claim: string, maxResults = 4): Promise<string[]> {
   const { primary, fallback } = buildArxivQuery(claim);
-  // Try precise phrase query first, fall back to broad keyword search
-  return (await runArxivQuery(primary)) ?? (await runArxivQuery(fallback));
+  // Try precise phrase query first; if fewer than wanted, fall back to keywords
+  const results = await runArxivQuery(primary, maxResults);
+  if (results.length > 0) return results;
+  return runArxivQuery(fallback, maxResults);
 }
 
 export async function findCitations(marked: MarkedSentence[], _domain?: string): Promise<CitedSentence[]> {
   const claims = marked.filter(m => m.isClaim);
-  if (!claims.length) return marked.map(m => ({ ...m, citation: null }));
+  if (!claims.length) return marked.map(m => ({ ...m, citations: [] }));
 
-  const results = await Promise.all(claims.map(m => searchArxiv(m.sentence)));
+  const results = await Promise.all(claims.map(m => searchArxiv(m.sentence, 4)));
 
   let idx = 0;
   return marked.map(m => {
-    if (!m.isClaim) return { ...m, citation: null };
-    const citation = results[idx++] ?? null;
-    return { sentence: m.sentence, isClaim: citation !== null, citation };
+    if (!m.isClaim) return { ...m, citations: [] };
+    const citations = results[idx++] ?? [];
+    return { sentence: m.sentence, isClaim: citations.length > 0, citations };
   });
 }
