@@ -1,21 +1,21 @@
 {
-  "name": "@automorph/verification-agent",
+  "name": "@automorph/veriphy",
   "version": "1.1.0",
-  "description": "Standalone claim verification agent — mark, shortlist, and cite LLM response claims",
+  "description": "Standalone verification agent — find factual claims in LLM responses and cite them with real arXiv papers",
   "main": "core.ts",
   "types": "core.ts",
   "bin": {
-    "claimcheck": "./cli.ts"
+    "veriphy": "./cli.ts"
   },
   "scripts": {
-    "start":   "tsx server.ts",
-    "proxy":   "tsx proxy.ts",
-    "dev":     "tsx --watch server.ts",
-    "dev:proxy":"tsx --watch proxy.ts",
-    "build":   "tsc --outDir dist",
-    "cli":     "tsx cli.ts"
+    "start":     "tsx server.ts",
+    "proxy":     "tsx proxy.ts",
+    "dev":       "tsx --watch server.ts",
+    "dev:proxy": "tsx --watch proxy.ts",
+    "build":     "tsc --outDir dist",
+    "cli":       "tsx cli.ts"
   },
-  "keywords": ["claim-verification", "citations", "LLM", "fact-checking", "agent", "proxy"],
+  "keywords": ["veriphy", "claim-verification", "citations", "LLM", "fact-checking", "agent", "proxy"],
   "license": "MIT",
   "engines": { "node": ">=18" },
   "dependencies": {
