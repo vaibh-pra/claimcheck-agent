@@ -136,19 +136,20 @@
 
   /* Public: call with the chatbot response text */
   VerificationAgent.prototype.run = async function (responseText) {
-    this._raw = responseText;
+    const cleanText = this._clean(responseText);
+    this._raw = cleanText;
     this._render(`<span class="va-spinner"></span>Marking claims…`);
     try {
-      const res  = await this._post('/api/mark-claims', { responseText, domain: this._domain });
+      const res  = await this._post('/api/mark-claims', { responseText: cleanText, domain: this._domain });
       const data = await res.json();
       if (data.marked && data.marked.length) {
         this._marked = data.marked;
         this._renderStep1();
       } else {
-        this._el.innerHTML = `<div class="va-wrap">${this._esc(responseText)}</div>`;
+        this._el.innerHTML = `<div class="va-wrap">${this._esc(cleanText)}</div>`;
       }
     } catch (_) {
-      this._el.innerHTML = `<div class="va-wrap">${this._esc(responseText)}</div>`;
+      this._el.innerHTML = `<div class="va-wrap">${this._esc(cleanText)}</div>`;
     }
   };
 
@@ -323,18 +324,38 @@
       .replace(/"/g, '&quot;');
   };
 
-  /* Strip markdown formatting symbols for clean plain-text display */
+  /* Strip markdown and formatting symbols for clean plain-text display */
   VerificationAgent.prototype._clean = function (str) {
     return String(str)
+      // remove table rows and alignment rows (lines containing | )
+      .replace(/^\|.*\|.*$/gm, '')
+      // remove horizontal rules
+      .replace(/^[-*_]{3,}\s*$/gm, '')
+      // remove ATX headers (# ## ### etc.)
       .replace(/^#{1,6}\s+/gm, '')
+      // remove bold and italic (order matters: bold before italic)
+      .replace(/\*\*\*(.+?)\*\*\*/g, '$1')
       .replace(/\*\*(.+?)\*\*/g, '$1')
       .replace(/\*(.+?)\*/g, '$1')
+      .replace(/___(.+?)___/g, '$1')
       .replace(/__(.+?)__/g, '$1')
-      .replace(/_(.+?)_/g, '$1')
-      .replace(/`{1,3}([^`]*)`{1,3}/g, '$1')
-      .replace(/^[-*_]{3,}\s*$/gm, '')
+      .replace(/_([^_\s][^_]*[^_\s]?)_/g, '$1')
+      // remove inline code and code blocks
+      .replace(/`{3}[\s\S]*?`{3}/g, '')
+      .replace(/`([^`]*)`/g, '$1')
+      // remove LaTeX math (inline $...$ and display $$...$$)
+      .replace(/\$\$[\s\S]*?\$\$/g, '')
+      .replace(/\$[^$\n]+?\$/g, '')
+      // remove original [N] reference markers that come from the LLM source text
+      .replace(/\[\d+\]/g, '')
+      // remove bullet list markers
       .replace(/^\s*[-*+]\s+/gm, '')
+      // remove numbered list markers
       .replace(/^\s*\d+\.\s+/gm, '')
+      // collapse multiple blank lines into one
+      .replace(/\n{3,}/g, '\n\n')
+      // strip leading/trailing whitespace from each line
+      .replace(/^[ \t]+|[ \t]+$/gm, '')
       .trim();
   };
 
