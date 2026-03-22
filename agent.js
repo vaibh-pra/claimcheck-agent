@@ -48,6 +48,14 @@
   cursor:pointer; transition:background .15s;
 }
 .va-pill-cite:hover { background:rgba(16,185,129,.22); }
+.va-cite-num {
+  font-size: inherit;
+  font-weight: 700;
+  color: #10b981;
+  cursor: pointer;
+  margin-left: 2px;
+}
+.va-cite-num:hover { text-decoration: underline; }
 .va-sources {
   margin-top: 12px;
   padding: 8px 12px;
@@ -274,13 +282,13 @@
         claimCount++;
         const num   = citMap.get(m.citation);
         const srcId = `${id}-src${num}`;
-        html += `<span class="va-claim">${s}<span class="va-pill va-pill-cite"
+        html += `<span class="va-claim">${s}<strong class="va-cite-num"
           onclick="(function(){
             var el=document.getElementById('${srcId}');
             el.scrollIntoView({behavior:'smooth',block:'nearest'});
             el.classList.add('va-src-flash');
             setTimeout(function(){el.classList.remove('va-src-flash');},1200);
-          })()">[${num}]</span></span> `;
+          })()">[${num}]</strong></span> `;
       } else {
         html += `<span>${s}</span> `;
       }
